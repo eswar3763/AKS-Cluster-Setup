@@ -1,0 +1,155 @@
+az aks create \
+  --resource-group myResourceGroup \
+  --name myAKSCluster \
+  --node-count 3 \
+  --network-plugin azure \
+  --vnet-subnet-id /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet> \
+  --service-cidr 10.0.0.0/16 \
+  --dns-service-ip 10.0.0.10
+
+1. az aks create
+This is the Azure CLI command to create a new AKS cluster.
+2. --resource-group myResourceGroup
+Specifies the Azure Resource Group that will contain your AKS cluster and related resources.
+If the resource group doesn't exist, you must create it beforehand (az group create ...).
+3. --name myAKSCluster
+Sets the name for your new AKS cluster.
+4. --node-count 3
+The cluster will start with 3 worker nodes (VMs) in its default node pool.
+These nodes will run your Kubernetes workloads (like pods and services).
+5. --network-plugin azure
+Specifies that the cluster should use the Azure CNI (Container Networking Interface) for networking.
+With Azure CNI, each pod gets an IP address from the Azure VNet, making network management more flexible and integrated with Azure resources.
+6. --vnet-subnet-id ...
+Tells AKS to deploy the cluster's nodes inside a specific subnet of an existing Azure Virtual Network (VNet).
+This allows the cluster to communicate privately with other Azure resources (like databases, VMs) and supports advanced networking.
+7. --service-cidr 10.0.0.0/16
+Defines the IP address range for Kubernetes services (like ClusterIP/LoadBalancer services).
+This CIDR block must NOT overlap with your VNet's subnet IP range!
+8. --dns-service-ip 10.0.0.10
+Sets the internal IP address used for the Kubernetes DNS service (CoreDNS).
+Must be an IP address within the range specified by --service-cidr.
+
+
+Summary Table
+Parameter	Purpose
+--resource-group	Azure Resource Group for the cluster
+--name	Name of the AKS cluster
+--node-count	Number of worker nodes (VMs) in the cluster
+--network-plugin	Networking model used (Azure CNI in this case)
+--vnet-subnet-id	Subnet where AKS nodes/pods will be deployed
+--service-cidr	IP range for Kubernetes service VIPs
+--dns-service-ip	IP address for CoreDNS service inside the cluster
+
+When to Use This Command?
+When setting up a new AKS cluster for the first time.
+When you need custom networking—such as VNet integration, specific service IP ranges, or Azure CNI plugin.
+Use it in automation scripts, DevOps pipelines, or direct CLI setup.
+What Happens After Running?
+Azure will:
+Set up a managed Kubernetes control plane for you.
+Provision 3 VMs in your specified subnet for worker nodes.
+Configure networking as per your settings.
+Reserve service and DNS IP ranges inside the cluster for Kubernetes operations.
+
+This command is used at the AKS cluster creation stage to set up the baseline cluster with custom networking (Azure CNI, VNet/subnet, service IP space), node count, and naming—all in a single step.
+
+If you want to see an example output or learn how these settings impact later cluster operations, let me know!
+
+what this will do and if it is assigning the ip address to the nodes or pod if the range of IPs got over what we have to do at that time --service-cidr 10.0.0.0/16 Defines the IP address range for Kubernetes services (like ClusterIP/LoadBalancer services). This CIDR block must NOT overlap with your VNet's subnet IP range!
+What Does --service-cidr 10.0.0.0/16 Do in AKS?
+The --service-cidr parameter defines the IP address range that Kubernetes will use to assign virtual IPs (VIPs) to Kubernetes Services within your AKS cluster.
+
+These IPs are used ONLY for Kubernetes services (such as ClusterIP, LoadBalancer, and NodePort).
+They are not used for pods or nodes.
+🗂️ How Service IPs Work
+When a new Kubernetes Service is created (for example, when you expose a deployment with a service), Kubernetes will assign a virtual IP (VIP) to that service from the range you specify here.
+Example:
+If your --service-cidr is 10.0.0.0/16, your services might get addresses like 10.0.0.42, 10.0.0.100, etc.
+Important:
+
+This range should NOT overlap with other ranges such as your Virtual Network subnet or the pod CIDR range.
+
+Does this Assign IPs to Nodes or Pods?
+Nodes:
+Assigned IPs from the Azure VNet subnet you specify with --vnet-subnet-id.
+Pods:
+With Azure CNI plugin (--network-plugin azure), pods get IPs from the same subnet as the nodes (VNet subnet).
+With Kubenet plugin, pods get IPs from a separate, non-overlapping CIDR specified using --pod-cidr.
+Services:
+Assigned IPs from the Service CIDR (--service-cidr).
+🔹 So, --service-cidr ONLY affects service VIPs—not pod or node IPs.
+
+What Happens If the Service CIDR Range Runs Out of IP Addresses?
+If you create a very large number of Services (hundreds/thousands) so that every IP in the service CIDR is used, no new Service VIPs can be assigned.
+New services will fail to get an IP, and you'll see errors such as:
+"Failed to assign an IP address to service: no available IPs in the Service CIDR range."
+
+What to Do If Service IPs Are Exhausted?
+
+Best Practice:
+
+Plan ahead and assign a sufficiently large CIDR for services when you create the AKS cluster.
+/16 (as in your example) provides ~65,000 IPs for services (usually more than enough for most clusters).
+
+If Already Out of IPs:
+
+Unfortunately, the --service-cidr range CANNOT be changed after cluster creation in AKS.
+Only solution: Create a new cluster with a larger service CIDR, and migrate workloads.
+
+
+In Short
+--service-cidr 10.0.0.0/16 assigns the range for service (VIP) IPs only.
+It will not affect pods or nodes.
+If exhausted, only solution is to recreate the cluster with a larger range—so plan accordingly!
+
+
+
+
+Why Would IP Exhaustion Happen?
+Subnet is too small: Not enough addresses allocated for the number of nodes * max pods per node.
+You scale out node count or pod density: New IPs are needed for each.
+Other Azure resources share the subnet (VMs, other services).
+Example:
+
+You have a /24 subnet (256 addresses), AKS reserves some for Azure infra, then allocates the rest to nodes and pods.
+If you deploy many pods or add many nodes, the IP pool runs out and new pods cannot be scheduled.
+What Happens When You Exhaust Subnet IPs?
+New pods cannot be scheduled and will remain in Pending state.
+Errors such as “Failed to allocate pod IP” occur.
+App deployment in your cluster is blocked.
+How Do You Prevent IP Exhaustion?
+
+Plan Subnet Size Upfront
+
+For Azure CNI, make your subnet much larger than you think you need.
+Microsoft recommends a /23, /22, or larger (/16 for large clusters), depending on planned scaling.
+
+Calculate Needed IPs
+
+Formula: (number of nodes) x (max pods per node) + node count + buffer
+Default max pods per node is 30 (can be increased).
+
+Use Separate Subnets
+
+If possible, have a dedicated subnet for AKS nodes/pods, not shared with other Azure resources.
+
+Tune Max Pods Per Node
+
+Can be set when creating node pool (--max-pods). Affects how many pod IPs are reserved per node.
+
+
+Remediation: What to Do if You Hit Exhaustion?
+1. Resize Subnet (If Possible)
+If the subnet doesn’t have other dependencies, expand it in Azure Portal, CLI, or PowerShell.
+2. Add a New Node Pool in a Larger Subnet
+Create a new subnet with a larger address space.
+Add a new node pool in that subnet.
+Migrate workloads to the new pool.
+3. Resize the Cluster (Create New One)
+For severe/complicated cases, create a new AKS cluster with a larger subnet and migrate workloads via backup/restore, manifests, or Helm.
+4. Use Kubenet (if advanced features aren’t needed)
+Only requires node IPs; pods get overlay addresses, resulting in much lower VNet IP consumption.
+Typical Error Messages:
+PodPending: Failed to assign an IP address to pod
+There are no available IP addresses in the subnet for this AKS cluster
